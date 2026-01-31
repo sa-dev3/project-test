@@ -39,7 +39,7 @@ jobs:
         with:
           script: |
             // context.payload にはイベントの情報（今回だと Issue の情報）が入っています
-            const    = context.payload.issue;
+            const issue = context.payload.issue;
 
             // GitHub REST API で「Issue にコメントを作成」します
             // owner/repo はこのWorkflowが動いているリポジトリ情報です
