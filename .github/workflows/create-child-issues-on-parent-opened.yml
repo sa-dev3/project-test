@@ -1,0 +1,208 @@
+# /**
+#  * ファイル概要:
+#  * - 親チケット（Issueタイトル先頭が「【親】」）の作成をトリガーに、子チケットを自動生成する GitHub Actions Workflow。
+#  *
+#  * 主な仕様・機能:
+#  * - Issue 作成イベント（opened）でのみ発火
+#  * - タイトルが「【親】」で始まる場合のみ処理対象
+#  * - 子チケットを以下の5種別で作成:
+#  *   - [要件] / [設計] / [実装] / [テスト設計] / [テスト実施]
+#  * - 子チケット本文に親チケット番号を埋め込み、親チケットへ作成結果（リンク一覧）をコメント
+#  * - 重複作成防止として、親チケットに `child-issues-created` ラベルを付与（既にある場合はスキップ）
+#  *
+#  * 制限事項:
+#  * - 親チケットを「編集で【親】に変えた」場合は対象外（opened のみ）
+#  * - 同名の子チケットが既に存在していても、重複検知はラベル（親側）ベース（ラベルが消された場合は再作成され得ます）
+#  * - ラベルは存在しない場合に作成を試みますが、権限や設定により作成できないことがあります
+#  */
+name: Create Child Issues On Parent Opened
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  create-child-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create child issues when parent issue is opened
+        uses: actions/github-script@v7
+        with:
+          script: |
+            /**
+             * 親Issueかどうかを判定します。
+             * @param {string} title Issueタイトル
+             * @returns {boolean} 親Issueならtrue
+             */
+            function isParentIssueTitle(title) {
+              return typeof title === "string" && title.trim().startsWith("【親】");
+            }
+
+            /**
+             * 親Issueタイトルから子Issueのベースタイトルを作ります。
+             * - 先頭の「【親】」と直後の空白を除去します。
+             * @param {string} parentTitle 親Issueタイトル
+             * @returns {string} 子Issueベースタイトル
+             */
+            function toBaseTitle(parentTitle) {
+              return parentTitle.replace(/^【親】\s*/, "").trim();
+            }
+
+            const issue = context.payload.issue;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            // 親以外は何もしない
+            if (!isParentIssueTitle(issue.title)) {
+              core.info(`Skip: not a parent issue. title="${issue.title}"`);
+              return;
+            }
+
+            const baseTitle = toBaseTitle(issue.title);
+            if (!baseTitle) {
+              core.warning(`Skip: baseTitle is empty. original title="${issue.title}"`);
+              return;
+            }
+
+            const dedupeLabel = "child-issues-created";
+
+            /**
+             * ラベルを確実に存在させます（なければ作成を試みる）。
+             * @param {string} name ラベル名
+             * @param {string} color 6桁HEX（#なし）
+             * @param {string} description 説明
+             * @returns {Promise<void>}
+             */
+            async function ensureLabelExists(name, color, description) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name });
+              } catch (e) {
+                // 404なら作成を試みる（それ以外は上位でログ）
+                if (e?.status !== 404) throw e;
+                try {
+                  await github.rest.issues.createLabel({ owner, repo, name, color, description });
+                } catch (createErr) {
+                  // 既に存在(422)等は握りつぶして続行
+                  core.info(`Label create skipped/failed: name="${name}", status=${createErr?.status ?? "unknown"}`);
+                }
+              }
+            }
+
+            // 重複防止ラベルが付いていたら終了
+            const parentLabels = (issue.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)).filter(Boolean);
+            if (parentLabels.includes(dedupeLabel)) {
+              core.info(`Skip: dedupe label already exists on parent issue #${issue.number}`);
+              return;
+            }
+
+            // ラベルの存在を（可能なら）担保
+            await ensureLabelExists(dedupeLabel, "0E8A16", "子チケット自動作成済み（重複防止）");
+            await ensureLabelExists("parent", "1D76DB", "親チケット");
+            await ensureLabelExists("child", "5319E7", "子チケット");
+
+            // 親に parent ラベルを付与（失敗しても致命ではない）
+            try {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issue.number,
+                labels: ["parent"],
+              });
+            } catch (e) {
+              core.info(`Failed to add "parent" label to issue #${issue.number}. status=${e?.status ?? "unknown"}`);
+            }
+
+            const childDefinitions = [
+              { prefix: "[要件]" },
+              { prefix: "[設計]" },
+              { prefix: "[実装]" },
+              { prefix: "[テスト設計]" },
+              { prefix: "[テスト実施]" },
+            ];
+
+            /**
+             * 子Issue本文を生成します。
+             * @param {string} parentUrl 親Issue URL
+             * @param {number} parentNumber 親Issue番号
+             * @param {string} childPrefix 子Issue種別プレフィックス
+             * @param {string} childBaseTitle 子Issueベースタイトル
+             * @returns {string} Markdown本文
+             */
+            function buildChildBody(parentUrl, parentNumber, childPrefix, childBaseTitle) {
+              return [
+                `親チケット: ${parentUrl}`,
+                ``,
+                `- 親Issue番号: #${parentNumber}`,
+                `- 種別: ${childPrefix}`,
+                ``,
+                `## 概要`,
+                `${childBaseTitle}`,
+                ``,
+                `## 進め方（例）`,
+                `- TODOを書き出す`,
+                `- 完了条件を明確化する`,
+                ``,
+                `---`,
+                `※このIssueは自動生成です。`,
+              ].join("\n");
+            }
+
+            // 子Issue作成（親Issueのアサイン/ラベルを一部引き継ぐ）
+            const parentAssignees = (issue.assignees ?? []).map((a) => a?.login).filter(Boolean);
+            const parentLabelNames = (issue.labels ?? [])
+              .map((l) => (typeof l === "string" ? l : l?.name))
+              .filter(Boolean)
+              .filter((name) => name !== dedupeLabel && name !== "parent" && name !== "child");
+
+            /** @type {{prefix: string, number: number, html_url: string, title: string}[]} */
+            const createdChildren = [];
+
+            for (const def of childDefinitions) {
+              const childTitle = `${def.prefix}${baseTitle}`;
+              const body = buildChildBody(issue.html_url, issue.number, def.prefix, baseTitle);
+
+              const created = await github.rest.issues.create({
+                owner,
+                repo,
+                title: childTitle,
+                body,
+                assignees: parentAssignees,
+                labels: ["child", ...parentLabelNames],
+              });
+
+              createdChildren.push({
+                prefix: def.prefix,
+                number: created.data.number,
+                html_url: created.data.html_url,
+                title: created.data.title,
+              });
+            }
+
+            // 親に重複防止ラベル付与
+            try {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: issue.number,
+                labels: [dedupeLabel],
+              });
+            } catch (e) {
+              core.warning(`Failed to add dedupe label to parent issue #${issue.number}. status=${e?.status ?? "unknown"}`);
+            }
+
+            // 親にコメント（リンク一覧）
+            const lines = [
+              `子チケットを自動作成しました ✅`,
+              ``,
+              ...createdChildren.map((c) => `- ${c.prefix} [#${c.number}](${c.html_url})`),
+            ];
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: lines.join("\n"),
+            });
