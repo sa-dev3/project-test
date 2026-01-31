@@ -8,7 +8,8 @@
 #  * - 子チケットを以下の5種別で作成:
 #  *   - [要件] / [設計] / [実装] / [テスト設計] / [テスト実施]
 #  * - リレーションシップ（親子関係）作成:
-#  *   - 親チケット本文に、子チケットへのタスクリスト（`- [ ] #123`）を追記して「親が子をトラッキングする」関係を作成
+#  *   - GitHub Issue の Relationships 機能（UIの「Add parent」相当）で親子関係を作成
+#  *   - GraphQL mutation `addSubIssue` を使い、親Issueに子Issue（Sub-issue）を紐付ける
 #  * - 重複作成防止:
 #  *   - 親チケット本文内のHTMLコメント（目印）を使って判定（ラベルは使用しない）
 #  *
@@ -69,6 +70,11 @@ jobs:
             }
 
             const relationshipMarker = "<!-- child-issues-created-by-workflow -->";
+            const parentIssueId = issue.node_id;
+            if (!parentIssueId) {
+              core.warning(`Skip: parent issue node_id is missing. issue_number=#${issue.number}`);
+              return;
+            }
 
             // 重複防止：親本文に目印があれば終了
             const parentBody = typeof issue.body === "string" ? issue.body : "";
@@ -118,6 +124,30 @@ jobs:
             /** @type {{prefix: string, number: number, html_url: string, title: string}[]} */
             const createdChildren = [];
 
+            /**
+             * 親子関係（Relationshipsの親子）を作成します。
+             * @param {string} parentId 親IssueのGraphQL node_id
+             * @param {string} subIssueId 子IssueのGraphQL node_id
+             * @returns {Promise<void>}
+             */
+            async function linkSubIssue(parentId, subIssueId) {
+              const mutation = `
+                mutation AddSubIssue($input: AddSubIssueInput!) {
+                  addSubIssue(input: $input) {
+                    issue { id number }
+                    subIssue { id number }
+                  }
+                }
+              `;
+
+              await github.graphql(mutation, {
+                input: {
+                  issueId: parentId,
+                  subIssueId,
+                },
+              });
+            }
+
             for (const def of childDefinitions) {
               const childTitle = `${def.prefix}${baseTitle}`;
               const body = buildChildBody(issue.html_url, issue.number, def.prefix, baseTitle);
@@ -130,6 +160,14 @@ jobs:
                 assignees: parentAssignees,
               });
 
+              const childIssueId = created.data.node_id;
+              if (!childIssueId) {
+                throw new Error(`Child issue node_id is missing. issue_number=#${created.data.number}`);
+              }
+
+              // Relationships（Add parent相当）で親子関係を作成
+              await linkSubIssue(parentIssueId, childIssueId);
+
               createdChildren.push({
                 prefix: def.prefix,
                 number: created.data.number,
@@ -139,30 +177,20 @@ jobs:
             }
 
             /**
-             * 親Issue本文へ、子Issueへのタスクリストを追記します。
+             * 親Issue本文へ、重複作成防止用の目印（HTMLコメント）だけを追記します。
              * @param {string} currentBody 現在の親本文
-             * @param {{prefix: string, number: number, html_url: string, title: string}[]} children 作成した子Issue
+             * @param {string} marker 目印
              * @returns {string} 更新後本文
              */
-            function buildUpdatedParentBody(currentBody, children) {
+            function appendRelationshipMarker(currentBody, marker) {
               const trimmed = (currentBody ?? "").trimEnd();
-              const header = "## 子チケット";
-              const relationshipLines = [
-                "",
-                header,
-                "",
-                ...children.map((c) => `- [ ] ${c.prefix} #${c.number}`),
-                "",
-                relationshipMarker,
-              ].join("\n");
-
-              // 末尾に追記（本文が空でも成立する）
-              return trimmed ? `${trimmed}\n${relationshipLines}\n` : `${relationshipLines}\n`;
+              if (!trimmed) return `${marker}\n`;
+              return trimmed.includes(marker) ? `${trimmed}\n` : `${trimmed}\n\n${marker}\n`;
             }
 
-            const updatedParentBody = buildUpdatedParentBody(parentBody, createdChildren);
+            const updatedParentBody = appendRelationshipMarker(parentBody, relationshipMarker);
 
-            // 親Issueを更新（ここでGitHubが親子関係を認識し、UI上のリレーションシップが作られる）
+            // 親Issueを更新（重複作成防止の目印を保存するため。親子関係自体は addSubIssue で作成済み）
             await github.rest.issues.update({
               owner,
               repo,
