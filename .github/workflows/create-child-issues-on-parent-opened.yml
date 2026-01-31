@@ -7,13 +7,14 @@
 #  * - タイトルが「【親】」で始まる場合のみ処理対象
 #  * - 子チケットを以下の5種別で作成:
 #  *   - [要件] / [設計] / [実装] / [テスト設計] / [テスト実施]
-#  * - 子チケット本文に親チケット番号を埋め込み、親チケットへ作成結果（リンク一覧）をコメント
-#  * - 重複作成防止として、親チケットに `child-issues-created` ラベルを付与（既にある場合はスキップ）
+#  * - リレーションシップ（親子関係）作成:
+#  *   - 親チケット本文に、子チケットへのタスクリスト（`- [ ] #123`）を追記して「親が子をトラッキングする」関係を作成
+#  * - 重複作成防止:
+#  *   - 親チケット本文内のHTMLコメント（目印）を使って判定（ラベルは使用しない）
 #  *
 #  * 制限事項:
 #  * - 親チケットを「編集で【親】に変えた」場合は対象外（opened のみ）
-#  * - 同名の子チケットが既に存在していても、重複検知はラベル（親側）ベース（ラベルが消された場合は再作成され得ます）
-#  * - ラベルは存在しない場合に作成を試みますが、権限や設定により作成できないことがあります
+#  * - 同名の子チケットが既に存在していても、本Workflowは本文目印がなければ作成します（目印を削除すると再作成され得ます）
 #  */
 name: Create Child Issues On Parent Opened
 
@@ -67,52 +68,13 @@ jobs:
               return;
             }
 
-            const dedupeLabel = "child-issues-created";
+            const relationshipMarker = "<!-- child-issues-created-by-workflow -->";
 
-            /**
-             * ラベルを確実に存在させます（なければ作成を試みる）。
-             * @param {string} name ラベル名
-             * @param {string} color 6桁HEX（#なし）
-             * @param {string} description 説明
-             * @returns {Promise<void>}
-             */
-            async function ensureLabelExists(name, color, description) {
-              try {
-                await github.rest.issues.getLabel({ owner, repo, name });
-              } catch (e) {
-                // 404なら作成を試みる（それ以外は上位でログ）
-                if (e?.status !== 404) throw e;
-                try {
-                  await github.rest.issues.createLabel({ owner, repo, name, color, description });
-                } catch (createErr) {
-                  // 既に存在(422)等は握りつぶして続行
-                  core.info(`Label create skipped/failed: name="${name}", status=${createErr?.status ?? "unknown"}`);
-                }
-              }
-            }
-
-            // 重複防止ラベルが付いていたら終了
-            const parentLabels = (issue.labels ?? []).map((l) => (typeof l === "string" ? l : l?.name)).filter(Boolean);
-            if (parentLabels.includes(dedupeLabel)) {
-              core.info(`Skip: dedupe label already exists on parent issue #${issue.number}`);
+            // 重複防止：親本文に目印があれば終了
+            const parentBody = typeof issue.body === "string" ? issue.body : "";
+            if (parentBody.includes(relationshipMarker)) {
+              core.info(`Skip: relationship marker already exists on parent issue #${issue.number}`);
               return;
-            }
-
-            // ラベルの存在を（可能なら）担保
-            await ensureLabelExists(dedupeLabel, "0E8A16", "子チケット自動作成済み（重複防止）");
-            await ensureLabelExists("parent", "1D76DB", "親チケット");
-            await ensureLabelExists("child", "5319E7", "子チケット");
-
-            // 親に parent ラベルを付与（失敗しても致命ではない）
-            try {
-              await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: issue.number,
-                labels: ["parent"],
-              });
-            } catch (e) {
-              core.info(`Failed to add "parent" label to issue #${issue.number}. status=${e?.status ?? "unknown"}`);
             }
 
             const childDefinitions = [
@@ -150,12 +112,8 @@ jobs:
               ].join("\n");
             }
 
-            // 子Issue作成（親Issueのアサイン/ラベルを一部引き継ぐ）
+            // 子Issue作成（親Issueのアサインのみ引き継ぐ。ラベルは一切付与しない）
             const parentAssignees = (issue.assignees ?? []).map((a) => a?.login).filter(Boolean);
-            const parentLabelNames = (issue.labels ?? [])
-              .map((l) => (typeof l === "string" ? l : l?.name))
-              .filter(Boolean)
-              .filter((name) => name !== dedupeLabel && name !== "parent" && name !== "child");
 
             /** @type {{prefix: string, number: number, html_url: string, title: string}[]} */
             const createdChildren = [];
@@ -170,7 +128,6 @@ jobs:
                 title: childTitle,
                 body,
                 assignees: parentAssignees,
-                labels: ["child", ...parentLabelNames],
               });
 
               createdChildren.push({
@@ -181,28 +138,34 @@ jobs:
               });
             }
 
-            // 親に重複防止ラベル付与
-            try {
-              await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: issue.number,
-                labels: [dedupeLabel],
-              });
-            } catch (e) {
-              core.warning(`Failed to add dedupe label to parent issue #${issue.number}. status=${e?.status ?? "unknown"}`);
+            /**
+             * 親Issue本文へ、子Issueへのタスクリストを追記します。
+             * @param {string} currentBody 現在の親本文
+             * @param {{prefix: string, number: number, html_url: string, title: string}[]} children 作成した子Issue
+             * @returns {string} 更新後本文
+             */
+            function buildUpdatedParentBody(currentBody, children) {
+              const trimmed = (currentBody ?? "").trimEnd();
+              const header = "## 子チケット";
+              const relationshipLines = [
+                "",
+                header,
+                "",
+                ...children.map((c) => `- [ ] ${c.prefix} #${c.number}`),
+                "",
+                relationshipMarker,
+              ].join("\n");
+
+              // 末尾に追記（本文が空でも成立する）
+              return trimmed ? `${trimmed}\n${relationshipLines}\n` : `${relationshipLines}\n`;
             }
 
-            // 親にコメント（リンク一覧）
-            const lines = [
-              `子チケットを自動作成しました ✅`,
-              ``,
-              ...createdChildren.map((c) => `- ${c.prefix} [#${c.number}](${c.html_url})`),
-            ];
+            const updatedParentBody = buildUpdatedParentBody(parentBody, createdChildren);
 
-            await github.rest.issues.createComment({
+            // 親Issueを更新（ここでGitHubが親子関係を認識し、UI上のリレーションシップが作られる）
+            await github.rest.issues.update({
               owner,
               repo,
               issue_number: issue.number,
-              body: lines.join("\n"),
+              body: updatedParentBody,
             });
