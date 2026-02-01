@@ -1,21 +1,31 @@
 # /**
-#  * ファイル概要:
-#  * - 親チケット（Issueタイトル先頭が「【親】」）の作成をトリガーに、子チケットを自動生成する GitHub Actions Workflow。
+#  * 【このファイルの概要】
+#  * このファイルは、GitHub Actionsのワークフローファイルです。
+#  * タイトルの先頭が「【親】」で始まるIssueが作成されたときに、自動的に5つの子Issueを作成します。
 #  *
-#  * 主な仕様・機能:
-#  * - Issue 作成イベント（opened）でのみ発火
-#  * - タイトルが「【親】」で始まる場合のみ処理対象
-#  * - 子チケットを以下の5種別で作成:
-#  *   - [要件] / [設計] / [実装] / [テスト設計] / [テスト実施]
-#  * - リレーションシップ（親子関係）作成:
-#  *   - GitHub Issue の Relationships 機能（UIの「Add parent」相当）で親子関係を作成
-#  *   - GraphQL mutation `addSubIssue` を使い、親Issueに子Issue（Sub-issue）を紐付ける
-#  * - 重複作成防止:
-#  *   - 親チケット本文内のHTMLコメント（目印）を使って判定（ラベルは使用しない）
+#  * 【動作の流れ】
+#  * 1. 誰かが「【親】新機能を追加する」のようなタイトルでIssueを作成します
+#  * 2. このワークフローが自動的に実行されます
+#  * 3. 以下の5つの子Issueが自動的に作成されます:
+#  *    - [要件]新機能を追加する
+#  *    - [設計]新機能を追加する
+#  *    - [実装]新機能を追加する
+#  *    - [テスト設計]新機能を追加する
+#  *    - [テスト実施]新機能を追加する
+#  * 4. 親Issueと子Issueの親子関係が自動的に作成されます
 #  *
-#  * 制限事項:
-#  * - 親チケットを「編集で【親】に変えた」場合は対象外（opened のみ）
-#  * - 同名の子チケットが既に存在していても、本Workflowは本文目印がなければ作成します（目印を削除すると再作成され得ます）
+#  * 【主な機能】
+#  * - Issueが作成されたとき（opened）にのみ動作します
+#  * - タイトルが「【親】」で始まる場合のみ処理します
+#  * - 子Issueには、親Issueと同じ担当者（アサイン）が自動的に割り当てられます
+#  * - 親Issueと子Issueの親子関係を自動的に作成します（GitHubのUIで「Add parent」を押したのと同じ効果）
+#  * - 同じ親Issueから子Issueが重複して作成されないように、目印（HTMLコメント）を使用します
+#  *
+#  * 【注意事項】
+#  * - 既に作成済みのIssueのタイトルを「【親】」に変更しても、このワークフローは動作しません
+#  *    （新規作成時のみ動作します）
+#  * - 親Issueの本文に目印が含まれている場合、子Issueは作成されません（重複防止）
+#  * - 目印を削除すると、再度子Issueが作成される可能性があります
 #  */
 name: Create Child Issues On Parent Opened
 
@@ -52,63 +62,77 @@ jobs:
           github-token: ${{ secrets.PROJECT_V2_TOKEN || github.token }}
           script: |
             /**
-             * 親Issueかどうかを判定します。
-             * @param {string} title Issueタイトル
-             * @returns {boolean} 親Issueならtrue
+             * このIssueが親Issueかどうかを判定する関数です。
+             * 親Issueは、タイトルの先頭が「【親】」で始まるIssueです。
+             *
+             * @param {string} title - 判定するIssueのタイトル
+             * @returns {boolean} - 親Issueの場合はtrue、そうでない場合はfalse
              */
             function isParentIssueTitle(title) {
               return typeof title === "string" && title.trim().startsWith("【親】");
             }
 
             /**
-             * 親Issueタイトルから子Issueのベースタイトルを作ります。
-             * - 先頭の「【親】」と直後の空白を除去します。
-             * @param {string} parentTitle 親Issueタイトル
-             * @returns {string} 子Issueベースタイトル
+             * 親Issueのタイトルから、子Issueのタイトルに使うベース部分を抽出する関数です。
+             * 例：「【親】新機能を追加する」→「新機能を追加する」
+             *
+             * @param {string} parentTitle - 親Issueのタイトル
+             * @returns {string} - 「【親】」とその後の空白を削除した文字列
              */
             function toBaseTitle(parentTitle) {
               return parentTitle.replace(/^【親】\s*/, "").trim();
             }
 
+            // イベントから作成されたIssueの情報を取得します
             const issue = context.payload.issue;
+            // リポジトリの所有者（ユーザー名または組織名）を取得します
             const owner = context.repo.owner;
+            // リポジトリ名を取得します
             const repo = context.repo.repo;
 
-            // 親以外は何もしない
+            // このIssueが親Issueでない場合は、何もせずに処理を終了します
+            // 親Issueはタイトルの先頭が「【親】」で始まるIssueです
             if (!isParentIssueTitle(issue.title)) {
               core.info(`Skip: not a parent issue. title="${issue.title}"`);
               return;
             }
 
+            // 親Issueのタイトルから「【親】」を除去して、子Issueのベースタイトルを取得します
             const baseTitle = toBaseTitle(issue.title);
+            // ベースタイトルが空の場合は、子Issueを作成できないので処理を終了します
             if (!baseTitle) {
               core.warning(`Skip: baseTitle is empty. original title="${issue.title}"`);
               return;
             }
 
-            const relationshipMarker = "<!-- 重複作成防止用の目印です。削除しないでください。 -->";
+            // 重複作成を防ぐための目印（HTMLコメント）を定義します
+            // この目印が親Issueの本文に含まれている場合、既に子Issueが作成済みと判断します
+            const relationshipMarker = "<!-- 重複作成防止用の目印です -->";
+
+            // 親IssueのGraphQL node_idを取得します
+            // node_idはGitHubのGraphQL APIでIssueを識別するために必要なIDです
             const parentIssueId = issue.node_id;
             if (!parentIssueId) {
               core.warning(`Skip: parent issue node_id is missing. issue_number=#${issue.number}`);
               return;
             }
 
+            // Project v2の設定値を環境変数から取得
+            // これらの値はリポジトリの設定（Settings > Secrets and variables > Actions > Variables）で設定します
             const projectV2Id = process.env.PROJECT_V2_ID;
             const projectV2StatusFieldId = process.env.PROJECT_V2_STATUS_FIELD_ID;
             const projectV2InProgressOptionId = process.env.PROJECT_V2_IN_PROGRESS_OPTION_ID;
 
-            // デバッグ: Variablesの読み込み状況を確認
-            core.info(`DEBUG: PROJECT_V2_ID=${projectV2Id ? "SET" : "NOT SET"}`);
-            core.info(`DEBUG: PROJECT_V2_STATUS_FIELD_ID=${projectV2StatusFieldId ? "SET" : "NOT SET"}`);
-            core.info(`DEBUG: PROJECT_V2_IN_PROGRESS_OPTION_ID=${projectV2InProgressOptionId ? "SET" : "NOT SET"}`);
-
-            // 重複防止：親本文に目印があれば終了
+            // 重複作成を防ぐため、親Issueの本文に目印（HTMLコメント）が既に含まれているか確認します
+            // 目印があれば、既に子Issueが作成済みなので処理を終了します
             const parentBody = typeof issue.body === "string" ? issue.body : "";
             if (parentBody.includes(relationshipMarker)) {
               core.info(`Skip: relationship marker already exists on parent issue #${issue.number}`);
               return;
             }
 
+            // 作成する子Issueの定義を配列で指定します
+            // 各子Issueには、タイトルの接頭辞（prefix）と使用するテンプレートファイルのパスを指定します
             const childDefinitions = [
               { prefix: "[要件]", templatePath: ".github/ISSUE_TEMPLATE/requirements.md" },
               { prefix: "[設計]", templatePath: ".github/ISSUE_TEMPLATE/design.md" },
@@ -118,171 +142,67 @@ jobs:
             ];
 
             /**
-             * Issue Forms形式またはマークダウンテンプレートファイルを読み込み、Markdown本文に変換します。
-             * @param {string} templatePath テンプレートファイルのパス
-             * @param {string} parentUrl 親Issue URL
-             * @param {number} parentNumber 親Issue番号
-             * @param {string} childBaseTitle 子Issueベースタイトル
-             * @returns {Promise<string>} Markdown本文
+             * マークダウンテンプレートファイルを読み込んで、子Issueの本文を作成する関数です。
+             * テンプレートファイルの先頭にあるフロントマター（---で囲まれた部分）を除去し、
+             * 親Issueへのリンクを追加してから返します。
+             *
+             * @param {string} templatePath - テンプレートファイルのパス（例: ".github/ISSUE_TEMPLATE/requirements.md"）
+             * @param {string} parentUrl - 親IssueのURL（使用されていませんが、互換性のため保持）
+             * @param {number} parentNumber - 親Issueの番号（例: 123）
+             * @param {string} childBaseTitle - 子Issueのベースタイトル
+             * @returns {Promise<string>} - 子Issueの本文として使用するMarkdown文字列
              */
             async function loadTemplateBody(templatePath, parentUrl, parentNumber, childBaseTitle) {
               try {
+                // ファイルシステムとパス操作のためのモジュールを読み込みます
                 const fs = require("fs");
                 const path = require("path");
 
-                // テンプレートファイルの絶対パスを取得
+                // GitHub Actionsのワークスペースのパスを取得します
+                // ワークスペースは、リポジトリのコードがチェックアウトされているディレクトリです
                 const workspacePath = process.env.GITHUB_WORKSPACE || ".";
+                // テンプレートファイルの絶対パスを作成します
                 const fullTemplatePath = path.join(workspacePath, templatePath);
 
-                // テンプレートファイルが存在するか確認
+                // テンプレートファイルが存在するか確認します
+                // 存在しない場合は、デフォルトの本文を返します
                 if (!fs.existsSync(fullTemplatePath)) {
                   core.warning(`Template file not found: ${fullTemplatePath}. Using default body.`);
                   return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
                 }
 
+                // テンプレートファイルの内容を読み込みます（UTF-8エンコーディング）
                 const templateContent = fs.readFileSync(fullTemplatePath, "utf8");
 
+                // 子Issueの本文を構成するための配列を用意します
                 const sections = [];
 
-                // 親チケット情報を先頭に追加
+                // 子Issueの本文の先頭に、親Issueへのリンクを追加します
                 sections.push(`- 親チケット: #${parentNumber}`);
                 sections.push(`---`);
                 sections.push(``);
 
-                // マークダウンファイル（.md）の場合はフロントマターを除去して本文をそのまま使用
+                // マークダウンファイル（.md）の場合の処理
                 if (templatePath.endsWith(".md")) {
-                  // フロントマター（---で囲まれた部分）を除去
+                  // フロントマター（---で囲まれた部分）を除去します
+                  // フロントマターは、テンプレートファイルの先頭にあるメタデータ（name、about、titleなど）です
                   const frontMatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
                   const match = templateContent.match(frontMatterRegex);
+                  // フロントマターが見つかった場合はその後の本文を、見つからない場合は全体を使用します
                   const bodyContent = match ? match[2] : templateContent;
                   sections.push(bodyContent.trim());
                   sections.push(``);
                   sections.push(`---`);
                   sections.push(`※このIssueは自動生成です。`);
+                  // 配列の要素を改行で結合して、最終的な本文文字列を返します
                   return sections.join("\n");
                 }
 
-                // Issue Forms形式（.yml）の場合は従来の処理
-
-                // bodyセクションを抽出して解析
-                const bodySectionMatch = templateContent.match(/^body:\s*\n((?:[ \t]+-.*\n?)+)/ms);
-                if (bodySectionMatch) {
-                  const bodySection = bodySectionMatch[1];
-
-                  // 各アイテムを抽出（簡易的な正規表現ベースのパーサー）
-                  const itemRegex = /^[ \t]+- type: (\w+)\s*\n((?:[ \t]+.*\n?)*)/gm;
-                  let match;
-
-                  while ((match = itemRegex.exec(bodySection)) !== null) {
-                    const itemType = match[1];
-                    const itemContent = match[2];
-
-                    if (itemType === "markdown") {
-                      // markdownセクションを抽出
-                      const valueMatch = itemContent.match(/attributes:\s*\n[ \t]+value:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
-                      if (valueMatch) {
-                        const markdownContent = valueMatch[1]
-                          .split("\n")
-                          .map(line => line.replace(/^[ \t]+/, ""))
-                          .filter(line => line.trim() || line === "")
-                          .join("\n");
-                        sections.push(markdownContent.trim());
-                        sections.push(``);
-                      }
-                    } else if (itemType === "textarea" || itemType === "input") {
-                      // textarea/inputフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-                      const description = descMatch ? descMatch[1] : "";
-
-                      sections.push(`### ${label}`);
-                      if (description) {
-                        sections.push(`${description}`);
-                      }
-                      // 入力欄は空のまま（プレースホルダーやコメントは追加しない）
-                      sections.push(``);
-                    } else if (itemType === "dropdown") {
-                      // dropdownフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
-                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-                      const description = descMatch ? descMatch[1] : "";
-
-                      sections.push(`### ${label}`);
-                      if (description) {
-                        sections.push(`${description}`);
-                      }
-                      if (optionsMatch) {
-                        const options = optionsMatch[1]
-                          .split("\n")
-                          .map(line => line.match(/[ \t]+- (.+)/))
-                          .filter(Boolean)
-                          .map(m => m[1]);
-                        if (options.length > 0) {
-                          sections.push(``);
-                          sections.push("選択肢:");
-                          options.forEach(opt => {
-                            sections.push(`- ${opt}`);
-                          });
-                        }
-                      }
-                      // 選択欄は空のまま（コメントは追加しない）
-                      sections.push(``);
-                    } else if (itemType === "checkboxes") {
-                      // checkboxesフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-
-                      sections.push(`### ${label}`);
-                      sections.push(``);
-                      if (optionsMatch) {
-                        const options = optionsMatch[1]
-                          .split("\n")
-                          .map(line => {
-                            const optMatch = line.match(/[ \t]+- label:\s*["']?([^"'\n]+)["']?/);
-                            return optMatch ? optMatch[1] : null;
-                          })
-                          .filter(Boolean);
-                        options.forEach(opt => {
-                          sections.push(`- [ ] ${opt}`);
-                        });
-                      }
-                      sections.push(``);
-                    }
-                  }
-                } else {
-                  // bodyセクションが見つからない場合はデフォルト本文を使用
-                  core.warning(`Template body section not found: ${templatePath}. Using default body.`);
-                  return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
-                }
-
-                sections.push(``);
-                sections.push(`---`);
-                sections.push(`※このIssueは自動生成です。`);
-
-                return sections.join("\n");
+                // .mdファイルでない場合は、デフォルトの本文を使用します
+                core.warning(`Template file is not a markdown file: ${templatePath}. Using default body.`);
+                return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
               } catch (e) {
+                // エラーが発生した場合は、エラーログを出力してデフォルトの本文を返します
                 core.error(`Failed to load template: ${templatePath}. Error: ${e.message}`);
                 core.error(`Stack: ${e.stack}`);
                 return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
@@ -290,11 +210,13 @@ jobs:
             }
 
             /**
-             * デフォルトの子Issue本文を生成します（テンプレートが使用できない場合のフォールバック）。
-             * @param {string} parentUrl 親Issue URL
-             * @param {number} parentNumber 親Issue番号
-             * @param {string} childBaseTitle 子Issueベースタイトル
-             * @returns {string} Markdown本文
+             * テンプレートファイルが読み込めなかった場合に使用する、デフォルトの子Issue本文を生成する関数です。
+             * この関数は、テンプレートファイルが見つからない場合や、読み込みに失敗した場合のフォールバックとして使用されます。
+             *
+             * @param {string} parentUrl - 親IssueのURL
+             * @param {number} parentNumber - 親Issueの番号（例: 123）
+             * @param {string} childBaseTitle - 子Issueのベースタイトル
+             * @returns {string} - デフォルトの子Issue本文（Markdown形式）
              */
             function buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle) {
               return [
@@ -315,19 +237,26 @@ jobs:
               ].join("\n");
             }
 
-            // 子Issue作成（親Issueのアサインのみ引き継ぐ。ラベルは一切付与しない）
+            // 親Issueに割り当てられている担当者（アサイン）のリストを取得します
+            // 子Issueにも同じ担当者を割り当てます（ラベルは引き継ぎません）
             const parentAssignees = (issue.assignees ?? []).map((a) => a?.login).filter(Boolean);
 
+            // 作成された子Issueの情報を保存するための配列です
+            // 現在は使用されていませんが、将来的な拡張のために保持しています
             /** @type {{prefix: string, number: number, html_url: string, title: string}[]} */
             const createdChildren = [];
 
             /**
-             * Issue/PR を Project v2 に追加します。
-             * @param {string} projectId Project v2 の node_id
-             * @param {string} contentId Issue/PR の node_id
-             * @returns {Promise<string>} 追加された itemId
+             * IssueまたはPull RequestをGitHub Project v2に追加する関数です。
+             * GraphQL APIを使用して、Project v2にアイテムを追加します。
+             *
+             * @param {string} projectId - Project v2のGraphQL node_id（識別子）
+             * @param {string} contentId - 追加するIssueまたはPRのGraphQL node_id
+             * @returns {Promise<string>} - Project v2に追加されたアイテムのID
              */
             async function addToProjectV2(projectId, contentId) {
+              // GraphQLのmutation（変更操作）を定義します
+              // このmutationは、Project v2に新しいアイテムを追加します
               const mutation = `
                 mutation AddProjectV2ItemById($input: AddProjectV2ItemByIdInput!) {
                   addProjectV2ItemById(input: $input) {
@@ -336,6 +265,7 @@ jobs:
                 }
               `;
 
+              // GraphQL APIを呼び出して、Project v2にアイテムを追加します
               const res = await github.graphql(mutation, {
                 input: {
                   projectId,
@@ -343,18 +273,23 @@ jobs:
                 },
               });
 
+              // 追加されたアイテムのIDを返します
               return res?.addProjectV2ItemById?.item?.id;
             }
 
             /**
-             * Project v2 の単一選択フィールド（例: Status）を更新します。
-             * @param {string} projectId Project v2 の node_id
-             * @param {string} itemId Project item の node_id
-             * @param {string} fieldId フィールドの node_id
-             * @param {string} optionId 選択肢の node_id
-             * @returns {Promise<void>}
+             * Project v2の単一選択フィールド（例: Statusフィールド）の値を更新する関数です。
+             * 例えば、Statusフィールドを「In Progress」に設定する場合に使用します。
+             *
+             * @param {string} projectId - Project v2のGraphQL node_id
+             * @param {string} itemId - 更新するProjectアイテムのGraphQL node_id
+             * @param {string} fieldId - 更新するフィールドのGraphQL node_id
+             * @param {string} optionId - 設定する選択肢のGraphQL node_id（例: "In Progress"のID）
+             * @returns {Promise<void>} - 更新が完了するまで待機します
              */
             async function setProjectV2SingleSelectField(projectId, itemId, fieldId, optionId) {
+              // GraphQLのmutationを定義します
+              // このmutationは、Project v2アイテムのフィールド値を更新します
               const mutation = `
                 mutation UpdateProjectV2ItemFieldValue($input: UpdateProjectV2ItemFieldValueInput!) {
                   updateProjectV2ItemFieldValue(input: $input) {
@@ -363,6 +298,7 @@ jobs:
                 }
               `;
 
+              // GraphQL APIを呼び出して、フィールド値を更新します
               await github.graphql(mutation, {
                 input: {
                   projectId,
@@ -376,12 +312,17 @@ jobs:
             }
 
             /**
-             * 親子関係（Relationshipsの親子）を作成します。
-             * @param {string} parentId 親IssueのGraphQL node_id
-             * @param {string} subIssueId 子IssueのGraphQL node_id
-             * @returns {Promise<void>}
+             * 親Issueと子Issueの親子関係を作成する関数です。
+             * GitHubのRelationships機能を使用して、親Issueと子Issueを紐付けます。
+             * これにより、GitHubのUIで「Add parent」ボタンを押したのと同じ効果が得られます。
+             *
+             * @param {string} parentId - 親IssueのGraphQL node_id
+             * @param {string} subIssueId - 子IssueのGraphQL node_id
+             * @returns {Promise<void>} - 親子関係の作成が完了するまで待機します
              */
             async function linkSubIssue(parentId, subIssueId) {
+              // GraphQLのmutationを定義します
+              // このmutationは、親Issueに子Issueを紐付けます
               const mutation = `
                 mutation AddSubIssue($input: AddSubIssueInput!) {
                   addSubIssue(input: $input) {
@@ -391,6 +332,7 @@ jobs:
                 }
               `;
 
+              // GraphQL APIを呼び出して、親子関係を作成します
               await github.graphql(mutation, {
                 input: {
                   issueId: parentId,
@@ -399,13 +341,13 @@ jobs:
               });
             }
 
-            // 親Issueを同じプロジェクトへ追加（設定されていない場合はスキップ）
+            // 親IssueをProject v2に追加します（設定されている場合のみ）
+            // PROJECT_V2_IDが設定されていない場合は、この処理をスキップします
             if (projectV2Id) {
               try {
-                core.info(`DEBUG: Adding parent issue #${issue.number} to Project v2...`);
                 await addToProjectV2(projectV2Id, parentIssueId);
-                core.info(`DEBUG: Successfully added parent issue #${issue.number} to Project v2.`);
               } catch (e) {
+                // Project v2への追加に失敗した場合は、エラーログを出力しますが処理は続行します
                 core.error(`Failed to add parent issue to Project v2. issue=#${issue.number}, status=${e?.status ?? "unknown"}, message=${e?.message ?? "unknown"}`);
                 if (e?.errors) {
                   core.error(`GraphQL errors: ${JSON.stringify(e.errors)}`);
@@ -415,8 +357,12 @@ jobs:
               core.info("Skip: PROJECT_V2_ID is not set. Project linking is disabled.");
             }
 
+            // 定義されたすべての子Issueを作成します
             for (const def of childDefinitions) {
+              // 子Issueのタイトルを作成します（例: "[要件]新機能を追加する"）
               const childTitle = `${def.prefix}${baseTitle}`;
+
+              // テンプレートファイルを読み込んで、子Issueの本文を作成します
               const body = await loadTemplateBody(
                 def.templatePath,
                 issue.html_url,
@@ -424,6 +370,7 @@ jobs:
                 baseTitle
               );
 
+              // GitHub REST APIを使用して、子Issueを作成します
               const created = await github.rest.issues.create({
                 owner,
                 repo,
@@ -432,34 +379,37 @@ jobs:
                 assignees: parentAssignees,
               });
 
+              // 作成された子IssueのGraphQL node_idを取得します
               const childIssueId = created.data.node_id;
               if (!childIssueId) {
                 throw new Error(`Child issue node_id is missing. issue_number=#${created.data.number}`);
               }
 
-              // Relationships（Add parent相当）で親子関係を作成
+              // 親Issueと子Issueの親子関係を作成します
+              // これにより、GitHubのUIで親子関係が表示されるようになります
               await linkSubIssue(parentIssueId, childIssueId);
 
-              // 子Issueを同じプロジェクトへ追加し、Status を In Progress にする（設定されている場合のみ）
+              // 子IssueをProject v2に追加し、Statusを「In Progress」に設定します（設定されている場合のみ）
               if (projectV2Id) {
                 try {
-                  core.info(`DEBUG: Adding child issue #${created.data.number} to Project v2...`);
+                  // 子IssueをProject v2に追加します
                   const itemId = await addToProjectV2(projectV2Id, childIssueId);
                   if (!itemId) {
                     core.warning(`Project itemId is missing for child issue. issue=#${created.data.number}`);
                   } else if (projectV2StatusFieldId && projectV2InProgressOptionId) {
-                    core.info(`DEBUG: Setting Status to In Progress for child issue #${created.data.number}...`);
+                    // Statusフィールドと「In Progress」オプションのIDが設定されている場合、
+                    // 子IssueのStatusを「In Progress」に設定します
                     await setProjectV2SingleSelectField(
                       projectV2Id,
                       itemId,
                       projectV2StatusFieldId,
                       projectV2InProgressOptionId
                     );
-                    core.info(`DEBUG: Successfully set Status to In Progress for child issue #${created.data.number}.`);
                   } else {
                     core.info("Skip: PROJECT_V2_STATUS_FIELD_ID or PROJECT_V2_IN_PROGRESS_OPTION_ID is not set. Status update is disabled.");
                   }
                 } catch (e) {
+                  // Project v2への追加やStatusの更新に失敗した場合は、エラーログを出力しますが処理は続行します
                   core.error(`Failed to add/update child issue in Project v2. issue=#${created.data.number}, status=${e?.status ?? "unknown"}, message=${e?.message ?? "unknown"}`);
                   if (e?.errors) {
                     core.error(`GraphQL errors: ${JSON.stringify(e.errors)}`);
@@ -467,6 +417,7 @@ jobs:
                 }
               }
 
+              // 作成された子Issueの情報を配列に保存します（将来の拡張用）
               createdChildren.push({
                 prefix: def.prefix,
                 number: created.data.number,
@@ -476,20 +427,30 @@ jobs:
             }
 
             /**
-             * 親Issue本文へ、重複作成防止用の目印（HTMLコメント）だけを追記します。
-             * @param {string} currentBody 現在の親本文
-             * @param {string} marker 目印
-             * @returns {string} 更新後本文
+             * 親Issueの本文に、重複作成防止用の目印（HTMLコメント）を追加する関数です。
+             * この目印により、同じ親Issueから子Issueが重複して作成されることを防ぎます。
+             *
+             * @param {string} currentBody - 現在の親Issueの本文
+             * @param {string} marker - 追加する目印（HTMLコメント）
+             * @returns {string} - 目印が追加された後の本文
              */
             function appendRelationshipMarker(currentBody, marker) {
+              // 本文の末尾の空白を除去します
               const trimmed = (currentBody ?? "").trimEnd();
+              // 本文が空の場合は、目印だけを返します
               if (!trimmed) return `${marker}\n`;
+              // 既に目印が含まれている場合は、そのまま返します
+              // 含まれていない場合は、改行を追加してから目印を追加します
               return trimmed.includes(marker) ? `${trimmed}\n` : `${trimmed}\n\n\n\n\n\n${marker}\n`;
             }
 
+            // 親Issueの本文に目印を追加します
             const updatedParentBody = appendRelationshipMarker(parentBody, relationshipMarker);
 
-            // 親Issueを更新（重複作成防止の目印を保存するため。親子関係自体は addSubIssue で作成済み）
+            // 親Issueの本文を更新します
+            // これにより、重複作成防止用の目印が保存され、次回同じ親Issueが開かれたときに
+            // 子Issueが重複して作成されることを防ぎます
+            // 注意: 親子関係自体は、先ほど実行したlinkSubIssue関数で既に作成済みです
             await github.rest.issues.update({
               owner,
               repo,
