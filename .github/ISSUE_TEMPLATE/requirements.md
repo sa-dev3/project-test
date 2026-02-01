@@ -1,7 +1,8 @@
 ---
-name: 要件
+name: 要件定義
 about: 要件定義用のIssueテンプレート
 title: "[要件] "
+labels: []
 ---
 
 ## 背景 / 課題

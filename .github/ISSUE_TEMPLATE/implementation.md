@@ -1,7 +1,8 @@
 ---
-name: 実装
+name: 実装タスク
 about: 実装タスクの計画・進行管理用Issueテンプレート
 title: "[実装] "
+labels: []
 ---
 
 ## 関連設計Issue

@@ -1,7 +1,8 @@
 ---
-name: 設計
+name: 設計検討
 about: 設計（アーキテクチャ/仕様）検討用のIssueテンプレート
 title: "[設計] "
+labels: []
 ---
 
 ## 関連要件Issue
