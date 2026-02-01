@@ -1,0 +1,160 @@
+# ==============================================================================
+# 概要:
+# - 設計（アーキテクチャ/仕様）検討用の Issue テンプレート（Issue Forms）です。
+#
+# 主な仕様・機能:
+# - 方針、構成、データ/画面/API、非機能要件、代替案、リスクを整理できます。
+#
+# 制限事項:
+# - 実装タスク分解は `実装` テンプレートで扱います（ここでは設計判断の根拠を重視）。
+# ==============================================================================
+
+name: "設計 🧭"
+description: "アーキテクチャ・仕様・非機能を整理し、実装前に合意する"
+title: "[設計] "
+labels:
+  - "type:design"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 目的
+        この Issue は設計判断（なぜその構成にするか）を残し、実装前に合意するためのテンプレートです。
+        要件 Issue（あれば）をリンクし、受け入れ条件に対して設計でどう満たすかを書きます。
+
+  - type: input
+    id: related-requirements
+    attributes:
+      label: 関連要件Issue
+      description: "例: #123（無ければ空でOK）"
+      placeholder: "#123"
+    validations:
+      required: false
+
+  - type: textarea
+    id: overview
+    attributes:
+      label: 設計概要
+      description: "今回の設計で実現することを、要点だけでまとめる"
+      placeholder: |
+        - 何をどう変えるか（高レベル）
+        - 影響範囲（主要コンポーネント/モジュール）
+    validations:
+      required: true
+
+  - type: textarea
+    id: architecture
+    attributes:
+      label: アーキテクチャ / 構成
+      description: "責務分割、境界、主要コンポーネント、データフロー"
+      placeholder: |
+        - 構成図（テキストでOK）
+        - 主要コンポーネント:
+          - ...
+        - データフロー:
+          - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: api-design
+    attributes:
+      label: API設計（任意）
+      description: "エンドポイント、リクエスト/レスポンス、認可/認証、エラー設計"
+      placeholder: |
+        - GET /api/...
+          - request: ...
+          - response: ...
+          - errors: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: ui-ux
+    attributes:
+      label: UI/UX設計（任意）
+      description: "画面遷移、状態（loading/empty/error）、アクセシビリティ"
+      placeholder: |
+        - 画面一覧/遷移:
+        - 状態:
+          - loading:
+          - empty:
+          - error:
+        - A11y:
+    validations:
+      required: false
+
+  - type: textarea
+    id: data-design
+    attributes:
+      label: データ設計（任意）
+      description: "DBスキーマ、マイグレーション、インデックス、整合性"
+      placeholder: |
+        - 追加/変更テーブル:
+        - マイグレーション方針:
+        - 互換性:
+    validations:
+      required: false
+
+  - type: textarea
+    id: non-functional
+    attributes:
+      label: 非機能要件（性能/可用性/セキュリティ/運用）
+      description: "SLO/レイテンシ、スケーリング、監視、ログ、権限、脆弱性観点など"
+      placeholder: |
+        - 性能:
+        - セキュリティ:
+        - 運用/監視:
+        - 互換性:
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollout
+    attributes:
+      label: リリース/移行計画
+      description: "段階リリース、Feature Flag、データ移行、ロールバック"
+      placeholder: |
+        - リリース手順:
+        - ロールバック手順:
+        - 影響/周知:
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 代替案と却下理由（重要）
+      description: "検討した選択肢と、採用しなかった理由を残す"
+      placeholder: |
+        - 案A: ...
+          - メリット:
+          - デメリット:
+          - 却下理由:
+        - 案B: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: 未決事項 / 相談事項
+      description: "決めきれていない点、レビューで決めたい点"
+      placeholder: |
+        - Q: ...
+          - 影響: ...
+          - 期日: ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: design-ready
+    attributes:
+      label: Ready チェック（実装着手前）
+      options:
+        - label: 要件（目的/受け入れ条件）に対する満たし方が説明できる
+          required: false
+        - label: 代替案の比較と採否理由が書かれている
+          required: false
+        - label: ロールバック/移行手順が定義されている
+          required: false

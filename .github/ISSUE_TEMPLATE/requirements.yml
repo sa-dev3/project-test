@@ -1,0 +1,144 @@
+# ==============================================================================
+# 概要:
+# - 要件定義用の Issue テンプレート（Issue Forms）です。
+#
+# 主な仕様・機能:
+# - 背景/目的/スコープ/受け入れ条件/リスク/依存関係を構造化して記入できます。
+#
+# 制限事項:
+# - このテンプレートは「実装方法」ではなく「何を・なぜ」を明確化することを目的とします。
+# ==============================================================================
+
+name: "要件 🧩"
+description: "背景・目的・スコープ・受け入れ条件を整理して合意形成する"
+title: "[要件] "
+labels:
+  - "type:requirements"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 目的
+        この Issue は「何を・なぜ」を明確にし、関係者間で合意形成するための要件定義テンプレートです。
+
+        - 実装方針は `設計` / `実装` テンプレートで扱います
+        - 不確実な点は「未確定」でもOK。前提と仮説を明記してください
+
+  - type: textarea
+    id: background
+    attributes:
+      label: 背景 / 課題
+      description: "現状の課題、発生している痛み、なぜ今取り組む必要があるか"
+      placeholder: |
+        -例:
+        - ○○の手作業が増えている
+        - エラー率が上がっている
+        - ユーザーから△△の要望が多い
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: 目的（達成したい価値）
+      description: "ユーザー/ビジネス/運用の観点で、達成したい価値を具体的に"
+      placeholder: |
+        例:
+        - ユーザーの○○完了までの時間を短縮する
+        - 運用の手戻りを減らす
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: スコープ（やること / やらないこと）
+      description: "今回の対象範囲と、明示的に対象外とすること"
+      placeholder: |
+        - やること:
+          - ...
+        - やらないこと:
+          - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: user-stories
+    attributes:
+      label: ユーザーストーリー（任意）
+      description: "Who/What/Why で書く（例: As a ... I want ... so that ...）"
+      placeholder: |
+        - As a ... I want ... so that ...
+        - As a ... I want ... so that ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: 受け入れ条件（Acceptance Criteria）
+      description: "完了の定義。テスト可能な粒度で箇条書きにする"
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 優先度
+      options:
+        - P0（最優先）
+        - P1（高）
+        - P2（中）
+        - P3（低）
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 制約 / 前提条件
+      description: "期限、予算、技術制約、互換性、法務・規約など"
+      placeholder: |
+        - 期限: ...
+        - 技術制約: ...
+        - 前提: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: リスク / 懸念
+      description: "起こりうる問題と回避策（分かる範囲でOK）"
+      placeholder: |
+        - リスク: ...
+          対策: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依存関係 / 関連Issue
+      description: "前提となるタスク、関連するIssue/PR、外部依存"
+      placeholder: |
+        - Depends on: #123
+        - Related: #456
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: definition-of-ready
+    attributes:
+      label: Ready チェック（着手前）
+      options:
+        - label: 目的とスコープが明確になっている
+          required: false
+        - label: 受け入れ条件がテスト可能な形で書かれている
+          required: false
+        - label: 主要ステークホルダーの合意が取れている（またはレビュー依頼済み）
+          required: false

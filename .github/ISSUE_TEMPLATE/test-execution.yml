@@ -1,0 +1,127 @@
+# ==============================================================================
+# 概要:
+# - テスト実施（結果記録）用の Issue テンプレート（Issue Forms）です。
+#
+# 主な仕様・機能:
+# - 実施環境、実施結果、証跡、検出不具合、再テスト状況、Go/No-Go を記録できます。
+#
+# 制限事項:
+# - テストケースそのものの設計は `テスト設計` テンプレートを使用してください。
+# ==============================================================================
+
+name: "テスト実施 ✅"
+description: "テスト実施の結果と証跡、不具合、判定（Go/No-Go）を記録する"
+title: "[テスト実施] "
+labels:
+  - "type:test-execution"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 目的
+        この Issue はテスト実施の記録を残し、品質判定（Go/No-Go）に必要な情報を揃えるためのテンプレートです。
+
+  - type: input
+    id: related-test-design
+    attributes:
+      label: 関連テスト設計Issue
+      description: "例: #345"
+      placeholder: "#345"
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: 対象（ブランチ/コミット/ビルド）
+      description: "どの成果物を検証したかが追える形で"
+      placeholder: "branch: feature/... / commit: abcdef / build: 2026-01-31.1"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 実施環境
+      description: "OS/ブラウザ/デバイス/環境（stg/prod相当）/設定/Feature Flag"
+      placeholder: |
+        - 環境: staging
+        - ブラウザ: Chrome xx
+        - 設定/フラグ:
+    validations:
+      required: true
+
+  - type: dropdown
+    id: overall-result
+    attributes:
+      label: 総合結果
+      options:
+        - Pass（合格）
+        - Fail（不合格）
+        - Blocked（阻害要因あり）
+        - Partial（条件付き）
+    validations:
+      required: true
+
+  - type: textarea
+    id: results
+    attributes:
+      label: 実施結果（要約）
+      description: "Pass/Fail 数、重要ケースの結果、気づき"
+      placeholder: |
+        - 実施ケース数: 0
+        - Pass: 0
+        - Fail: 0
+        - Blocked: 0
+        - 重要観点の結果:
+          - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 証跡（スクショ/動画/ログ/レポート）
+      description: "リンクや添付（GitHubに貼れる範囲で）"
+      placeholder: |
+        - スクショ: ...
+        - 動画: ...
+        - ログ: ...
+        - レポート: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: found-bugs
+    attributes:
+      label: 検出不具合（Issueリンク）
+      description: "発見した不具合の Issue を列挙"
+      placeholder: |
+        - #000
+        - #000
+    validations:
+      required: false
+
+  - type: textarea
+    id: retest
+    attributes:
+      label: 再テスト / 回帰テスト状況
+      description: "修正後の再確認、既存機能への影響確認"
+      placeholder: |
+        - 再テスト対象:
+        - 回帰観点:
+        - 結果:
+    validations:
+      required: false
+
+  - type: textarea
+    id: go-no-go
+    attributes:
+      label: 判定（Go/No-Go）と理由
+      description: "リリース可否の判断と根拠、残課題があれば明記"
+      placeholder: |
+        - 判定: Go / No-Go / Conditional
+        - 理由:
+        - 残課題:
+    validations:
+      required: true

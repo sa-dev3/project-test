@@ -1,0 +1,132 @@
+# ==============================================================================
+# 概要:
+# - 実装タスクの計画・進行管理用 Issue テンプレート（Issue Forms）です。
+#
+# 主な仕様・機能:
+# - タスク分解、影響範囲、レビュー観点、リリース手順、計測/監視、完了条件を明文化します。
+#
+# 制限事項:
+# - 設計判断の根拠や代替案の比較は `設計` テンプレートに集約してください。
+# ==============================================================================
+
+name: "実装 🛠️"
+description: "タスク分解して実装を進める（PR/リリース/観測性まで）"
+title: "[実装] "
+labels:
+  - "type:implementation"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 目的
+        この Issue は「何をどう作るか」を実行可能なタスクに分解し、レビューとリリースまでを一気通貫で管理するためのテンプレートです。
+
+  - type: input
+    id: related-design
+    attributes:
+      label: 関連設計Issue
+      description: "例: #234（無ければ空でOK）"
+      placeholder: "#234"
+    validations:
+      required: false
+
+  - type: textarea
+    id: implementation-scope
+    attributes:
+      label: 実装範囲（今回やること）
+      description: "この Issue で完了させる範囲を明確に"
+      placeholder: |
+        - 追加する機能:
+        - 修正する挙動:
+        - 影響範囲:
+    validations:
+      required: true
+
+  - type: textarea
+    id: task-breakdown
+    attributes:
+      label: タスク分解（チェックリスト）
+      description: "レビュー可能な単位に分解。可能なら PR 単位も意識する"
+      placeholder: |
+        - [ ] 実装: ...
+        - [ ] API: ...
+        - [ ] UI: ...
+        - [ ] 例外/エラー処理: ...
+        - [ ] ログ/監視: ...
+        - [ ] ドキュメント更新: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: prs
+    attributes:
+      label: 関連PR（リンク）
+      description: "PR を貼って進捗を追えるようにする"
+      placeholder: |
+        - #000
+        - #000
+    validations:
+      required: false
+
+  - type: textarea
+    id: risk-check
+    attributes:
+      label: 影響/リスク（実装観点）
+      description: "壊れやすい箇所、後方互換、データ、権限、性能など"
+      placeholder: |
+        - 影響範囲:
+        - リスク:
+        - 回避策:
+    validations:
+      required: false
+
+  - type: textarea
+    id: error-handling
+    attributes:
+      label: エラー処理方針（任意）
+      description: "想定されるエラーとユーザー向け表示/開発者向けログの分離"
+      placeholder: |
+        - 想定エラー:
+        - ユーザー表示:
+        - ログ（追加する情報）:
+    validations:
+      required: false
+
+  - type: textarea
+    id: observability
+    attributes:
+      label: 観測性（ログ/メトリクス/アラート）
+      description: "運用で検知できる状態にする。最低限ログの出しどころを明記"
+      placeholder: |
+        - ログ:
+        - メトリクス:
+        - アラート:
+        - ダッシュボード:
+    validations:
+      required: false
+
+  - type: textarea
+    id: release-plan
+    attributes:
+      label: リリース手順 / ロールバック手順
+      description: "段階リリース、Feature Flag、マイグレーション、戻し方"
+      placeholder: |
+        - リリース手順:
+        - ロールバック手順:
+        - 周知:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: done-check
+    attributes:
+      label: Done チェック（完了条件）
+      options:
+        - label: 受け入れ条件を満たすことを確認した
+          required: false
+        - label: 主要パスのエラー処理が入っている
+          required: false
+        - label: 必要なログ/監視が追加されている
+          required: false
+        - label: リリース/ロールバック手順が再現可能な形で残っている
+          required: false
