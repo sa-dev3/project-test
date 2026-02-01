@@ -27,7 +27,7 @@
 #  * - 親Issueの本文に目印が含まれている場合、子Issueは作成されません（重複防止）
 #  * - 目印を削除すると、再度子Issueが作成される可能性があります
 #  */
-name: Create Child Issues On Parent Opened
+name: Auto Create Child Issues
 
 on:
   issues:
