@@ -110,15 +110,15 @@ jobs:
             }
 
             const childDefinitions = [
-              { prefix: "[要件]", templatePath: ".github/ISSUE_TEMPLATE/requirements.yml" },
-              { prefix: "[設計]", templatePath: ".github/ISSUE_TEMPLATE/design.yml" },
-              { prefix: "[実装]", templatePath: ".github/ISSUE_TEMPLATE/implementation.yml" },
-              { prefix: "[テスト設計]", templatePath: ".github/ISSUE_TEMPLATE/test-design.yml" },
-              { prefix: "[テスト実施]", templatePath: ".github/ISSUE_TEMPLATE/test-execution.yml" },
+              { prefix: "[要件]", templatePath: ".github/ISSUE_TEMPLATE/requirements.md" },
+              { prefix: "[設計]", templatePath: ".github/ISSUE_TEMPLATE/design.md" },
+              { prefix: "[実装]", templatePath: ".github/ISSUE_TEMPLATE/implementation.md" },
+              { prefix: "[テスト設計]", templatePath: ".github/ISSUE_TEMPLATE/test-design.md" },
+              { prefix: "[テスト実施]", templatePath: ".github/ISSUE_TEMPLATE/test-execution.md" },
             ];
 
             /**
-             * Issue Forms形式のテンプレートファイルを読み込み、Markdown本文に変換します。
+             * Issue Forms形式またはマークダウンテンプレートファイルを読み込み、Markdown本文に変換します。
              * @param {string} templatePath テンプレートファイルのパス
              * @param {string} parentUrl 親Issue URL
              * @param {number} parentNumber 親Issue番号
@@ -142,8 +142,6 @@ jobs:
 
                 const templateContent = fs.readFileSync(fullTemplatePath, "utf8");
 
-                // シンプルなYAMLパーサーでbodyセクションを抽出
-                // 完全な実装にはjs-yamlが必要ですが、基本的な構造は正規表現で抽出可能
                 const sections = [];
 
                 // 親チケット情報を先頭に追加
@@ -154,6 +152,21 @@ jobs:
                 sections.push(``);
                 sections.push(`---`);
                 sections.push(``);
+
+                // マークダウンファイル（.md）の場合はフロントマターを除去して本文をそのまま使用
+                if (templatePath.endsWith(".md")) {
+                  // フロントマター（---で囲まれた部分）を除去
+                  const frontMatterRegex = /^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/;
+                  const match = templateContent.match(frontMatterRegex);
+                  const bodyContent = match ? match[2] : templateContent;
+                  sections.push(bodyContent.trim());
+                  sections.push(``);
+                  sections.push(`---`);
+                  sections.push(`※このIssueは自動生成です。`);
+                  return sections.join("\n");
+                }
+
+                // Issue Forms形式（.yml）の場合は従来の処理
 
                 // bodyセクションを抽出して解析
                 const bodySectionMatch = templateContent.match(/^body:\s*\n((?:[ \t]+-.*\n?)+)/ms);
