@@ -35,7 +35,7 @@ body:
         - エラー率が上がっている
         - ユーザーから△△の要望が多い
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: objective
@@ -47,7 +47,7 @@ body:
         - ユーザーの○○完了までの時間を短縮する
         - 運用の手戻りを減らす
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: scope
@@ -60,7 +60,7 @@ body:
         - やらないこと:
           - ...
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: user-stories
@@ -83,7 +83,7 @@ body:
         - [ ] ...
         - [ ] ...
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: priority
@@ -95,7 +95,7 @@ body:
         - P2（中）
         - P3（低）
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: constraints
