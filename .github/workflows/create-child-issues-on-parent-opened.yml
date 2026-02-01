@@ -86,7 +86,7 @@ jobs:
               return;
             }
 
-            const relationshipMarker = "<!-- child-issues-created-by-workflow -->";
+            const relationshipMarker = "<!-- 重複作成防止用の目印です。削除しないでください。 -->";
             const parentIssueId = issue.node_id;
             if (!parentIssueId) {
               core.warning(`Skip: parent issue node_id is missing. issue_number=#${issue.number}`);
@@ -475,7 +475,7 @@ jobs:
             function appendRelationshipMarker(currentBody, marker) {
               const trimmed = (currentBody ?? "").trimEnd();
               if (!trimmed) return `${marker}\n`;
-              return trimmed.includes(marker) ? `${trimmed}\n` : `${trimmed}\n\n${marker}\n`;
+              return trimmed.includes(marker) ? `${trimmed}\n` : `${trimmed}\n\n\n\n\n\n${marker}\n`;
             }
 
             const updatedParentBody = appendRelationshipMarker(parentBody, relationshipMarker);
