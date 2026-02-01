@@ -184,29 +184,20 @@ jobs:
                       // textarea/inputフィールドを抽出
                       const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
                       const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
-                      const placeholderMatch = itemContent.match(/placeholder:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
 
-                      const label = labelMatch ? labelMatch[1] : "未設定";
+                      // ラベルが見つからない場合はスキップ
+                      if (!labelMatch) {
+                        continue;
+                      }
+
+                      const label = labelMatch[1];
                       const description = descMatch ? descMatch[1] : "";
 
                       sections.push(`### ${label}`);
                       if (description) {
                         sections.push(`${description}`);
                       }
-                      if (placeholderMatch) {
-                        const placeholder = placeholderMatch[1]
-                          .split("\n")
-                          .map(line => line.replace(/^[ \t]+/, ""))
-                          .filter(line => line.trim())
-                          .join("\n");
-                        sections.push(``);
-                        sections.push("```");
-                        sections.push(placeholder);
-                        sections.push("```");
-                      } else {
-                        sections.push(``);
-                        sections.push("<!-- ここに記入してください -->");
-                      }
+                      // 入力欄は空のまま（プレースホルダーやコメントは追加しない）
                       sections.push(``);
                     } else if (itemType === "dropdown") {
                       // dropdownフィールドを抽出
@@ -214,7 +205,12 @@ jobs:
                       const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
                       const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
 
-                      const label = labelMatch ? labelMatch[1] : "未設定";
+                      // ラベルが見つからない場合はスキップ
+                      if (!labelMatch) {
+                        continue;
+                      }
+
+                      const label = labelMatch[1];
                       const description = descMatch ? descMatch[1] : "";
 
                       sections.push(`### ${label}`);
@@ -235,15 +231,19 @@ jobs:
                           });
                         }
                       }
-                      sections.push(``);
-                      sections.push("<!-- 選択してください -->");
+                      // 選択欄は空のまま（コメントは追加しない）
                       sections.push(``);
                     } else if (itemType === "checkboxes") {
                       // checkboxesフィールドを抽出
                       const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
                       const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
 
-                      const label = labelMatch ? labelMatch[1] : "未設定";
+                      // ラベルが見つからない場合はスキップ
+                      if (!labelMatch) {
+                        continue;
+                      }
+
+                      const label = labelMatch[1];
 
                       sections.push(`### ${label}`);
                       sections.push(``);
