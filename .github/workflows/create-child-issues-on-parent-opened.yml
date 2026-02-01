@@ -32,6 +32,9 @@ jobs:
   create-child-issues:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Create child issues when parent issue is opened
         uses: actions/github-script@v7
         env:
@@ -107,27 +110,189 @@ jobs:
             }
 
             const childDefinitions = [
-              { prefix: "[要件]" },
-              { prefix: "[設計]" },
-              { prefix: "[実装]" },
-              { prefix: "[テスト設計]" },
-              { prefix: "[テスト実施]" },
+              { prefix: "[要件]", templatePath: ".github/ISSUE_TEMPLATE/requirements.yml" },
+              { prefix: "[設計]", templatePath: ".github/ISSUE_TEMPLATE/design.yml" },
+              { prefix: "[実装]", templatePath: ".github/ISSUE_TEMPLATE/implementation.yml" },
+              { prefix: "[テスト設計]", templatePath: ".github/ISSUE_TEMPLATE/test-design.yml" },
+              { prefix: "[テスト実施]", templatePath: ".github/ISSUE_TEMPLATE/test-execution.yml" },
             ];
 
             /**
-             * 子Issue本文を生成します。
+             * Issue Forms形式のテンプレートファイルを読み込み、Markdown本文に変換します。
+             * @param {string} templatePath テンプレートファイルのパス
              * @param {string} parentUrl 親Issue URL
              * @param {number} parentNumber 親Issue番号
-             * @param {string} childPrefix 子Issue種別プレフィックス
+             * @param {string} childBaseTitle 子Issueベースタイトル
+             * @returns {Promise<string>} Markdown本文
+             */
+            async function loadTemplateBody(templatePath, parentUrl, parentNumber, childBaseTitle) {
+              try {
+                const fs = require("fs");
+                const path = require("path");
+
+                // テンプレートファイルの絶対パスを取得
+                const workspacePath = process.env.GITHUB_WORKSPACE || ".";
+                const fullTemplatePath = path.join(workspacePath, templatePath);
+
+                // テンプレートファイルが存在するか確認
+                if (!fs.existsSync(fullTemplatePath)) {
+                  core.warning(`Template file not found: ${fullTemplatePath}. Using default body.`);
+                  return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
+                }
+
+                const templateContent = fs.readFileSync(fullTemplatePath, "utf8");
+
+                // シンプルなYAMLパーサーでbodyセクションを抽出
+                // 完全な実装にはjs-yamlが必要ですが、基本的な構造は正規表現で抽出可能
+                const sections = [];
+
+                // 親チケット情報を先頭に追加
+                sections.push(`親チケット: ${parentUrl}`);
+                sections.push(``);
+                sections.push(`- 親Issue番号: #${parentNumber}`);
+                sections.push(`- 種別: ${childBaseTitle}`);
+                sections.push(``);
+                sections.push(`---`);
+                sections.push(``);
+
+                // bodyセクションを抽出して解析
+                const bodySectionMatch = templateContent.match(/^body:\s*\n((?:[ \t]+-.*\n?)+)/ms);
+                if (bodySectionMatch) {
+                  const bodySection = bodySectionMatch[1];
+
+                  // 各アイテムを抽出（簡易的な正規表現ベースのパーサー）
+                  const itemRegex = /^[ \t]+- type: (\w+)\s*\n((?:[ \t]+.*\n?)*)/gm;
+                  let match;
+
+                  while ((match = itemRegex.exec(bodySection)) !== null) {
+                    const itemType = match[1];
+                    const itemContent = match[2];
+
+                    if (itemType === "markdown") {
+                      // markdownセクションを抽出
+                      const valueMatch = itemContent.match(/attributes:\s*\n[ \t]+value:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
+                      if (valueMatch) {
+                        const markdownContent = valueMatch[1]
+                          .split("\n")
+                          .map(line => line.replace(/^[ \t]+/, ""))
+                          .filter(line => line.trim() || line === "")
+                          .join("\n");
+                        sections.push(markdownContent.trim());
+                        sections.push(``);
+                      }
+                    } else if (itemType === "textarea" || itemType === "input") {
+                      // textarea/inputフィールドを抽出
+                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
+                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
+                      const placeholderMatch = itemContent.match(/placeholder:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
+
+                      const label = labelMatch ? labelMatch[1] : "未設定";
+                      const description = descMatch ? descMatch[1] : "";
+
+                      sections.push(`### ${label}`);
+                      if (description) {
+                        sections.push(`${description}`);
+                      }
+                      if (placeholderMatch) {
+                        const placeholder = placeholderMatch[1]
+                          .split("\n")
+                          .map(line => line.replace(/^[ \t]+/, ""))
+                          .filter(line => line.trim())
+                          .join("\n");
+                        sections.push(``);
+                        sections.push("```");
+                        sections.push(placeholder);
+                        sections.push("```");
+                      } else {
+                        sections.push(``);
+                        sections.push("<!-- ここに記入してください -->");
+                      }
+                      sections.push(``);
+                    } else if (itemType === "dropdown") {
+                      // dropdownフィールドを抽出
+                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
+                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
+                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
+
+                      const label = labelMatch ? labelMatch[1] : "未設定";
+                      const description = descMatch ? descMatch[1] : "";
+
+                      sections.push(`### ${label}`);
+                      if (description) {
+                        sections.push(`${description}`);
+                      }
+                      if (optionsMatch) {
+                        const options = optionsMatch[1]
+                          .split("\n")
+                          .map(line => line.match(/[ \t]+- (.+)/))
+                          .filter(Boolean)
+                          .map(m => m[1]);
+                        if (options.length > 0) {
+                          sections.push(``);
+                          sections.push("選択肢:");
+                          options.forEach(opt => {
+                            sections.push(`- ${opt}`);
+                          });
+                        }
+                      }
+                      sections.push(``);
+                      sections.push("<!-- 選択してください -->");
+                      sections.push(``);
+                    } else if (itemType === "checkboxes") {
+                      // checkboxesフィールドを抽出
+                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
+                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
+
+                      const label = labelMatch ? labelMatch[1] : "未設定";
+
+                      sections.push(`### ${label}`);
+                      sections.push(``);
+                      if (optionsMatch) {
+                        const options = optionsMatch[1]
+                          .split("\n")
+                          .map(line => {
+                            const optMatch = line.match(/[ \t]+- label:\s*["']?([^"'\n]+)["']?/);
+                            return optMatch ? optMatch[1] : null;
+                          })
+                          .filter(Boolean);
+                        options.forEach(opt => {
+                          sections.push(`- [ ] ${opt}`);
+                        });
+                      }
+                      sections.push(``);
+                    }
+                  }
+                } else {
+                  // bodyセクションが見つからない場合はデフォルト本文を使用
+                  core.warning(`Template body section not found: ${templatePath}. Using default body.`);
+                  return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
+                }
+
+                sections.push(``);
+                sections.push(`---`);
+                sections.push(`※このIssueは自動生成です。`);
+
+                return sections.join("\n");
+              } catch (e) {
+                core.error(`Failed to load template: ${templatePath}. Error: ${e.message}`);
+                core.error(`Stack: ${e.stack}`);
+                return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
+              }
+            }
+
+            /**
+             * デフォルトの子Issue本文を生成します（テンプレートが使用できない場合のフォールバック）。
+             * @param {string} parentUrl 親Issue URL
+             * @param {number} parentNumber 親Issue番号
              * @param {string} childBaseTitle 子Issueベースタイトル
              * @returns {string} Markdown本文
              */
-            function buildChildBody(parentUrl, parentNumber, childPrefix, childBaseTitle) {
+            function buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle) {
               return [
                 `親チケット: ${parentUrl}`,
                 ``,
                 `- 親Issue番号: #${parentNumber}`,
-                `- 種別: ${childPrefix}`,
+                `- 種別: ${childBaseTitle}`,
                 ``,
                 `## 概要`,
                 `${childBaseTitle}`,
@@ -243,7 +408,12 @@ jobs:
 
             for (const def of childDefinitions) {
               const childTitle = `${def.prefix}${baseTitle}`;
-              const body = buildChildBody(issue.html_url, issue.number, def.prefix, baseTitle);
+              const body = await loadTemplateBody(
+                def.templatePath,
+                issue.html_url,
+                issue.number,
+                baseTitle
+              );
 
               const created = await github.rest.issues.create({
                 owner,
