@@ -145,7 +145,7 @@ jobs:
                 const sections = [];
 
                 // 親チケット情報を先頭に追加
-                sections.push(`親チケット: ${parentNumber}`);
+                sections.push(`親チケット: #${parentNumber}`);
                 sections.push(`---`);
                 sections.push(``);
 
