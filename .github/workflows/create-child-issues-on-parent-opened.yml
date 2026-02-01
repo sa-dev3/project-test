@@ -94,6 +94,11 @@ jobs:
             const projectV2StatusFieldId = process.env.PROJECT_V2_STATUS_FIELD_ID;
             const projectV2InProgressOptionId = process.env.PROJECT_V2_IN_PROGRESS_OPTION_ID;
 
+            // デバッグ: Variablesの読み込み状況を確認
+            core.info(`DEBUG: PROJECT_V2_ID=${projectV2Id ? "SET" : "NOT SET"}`);
+            core.info(`DEBUG: PROJECT_V2_STATUS_FIELD_ID=${projectV2StatusFieldId ? "SET" : "NOT SET"}`);
+            core.info(`DEBUG: PROJECT_V2_IN_PROGRESS_OPTION_ID=${projectV2InProgressOptionId ? "SET" : "NOT SET"}`);
+
             // 重複防止：親本文に目印があれば終了
             const parentBody = typeof issue.body === "string" ? issue.body : "";
             if (parentBody.includes(relationshipMarker)) {
@@ -223,9 +228,14 @@ jobs:
             // 親Issueを同じプロジェクトへ追加（設定されていない場合はスキップ）
             if (projectV2Id) {
               try {
+                core.info(`DEBUG: Adding parent issue #${issue.number} to Project v2...`);
                 await addToProjectV2(projectV2Id, parentIssueId);
+                core.info(`DEBUG: Successfully added parent issue #${issue.number} to Project v2.`);
               } catch (e) {
-                core.warning(`Failed to add parent issue to Project v2. issue=#${issue.number}, status=${e?.status ?? "unknown"}`);
+                core.error(`Failed to add parent issue to Project v2. issue=#${issue.number}, status=${e?.status ?? "unknown"}, message=${e?.message ?? "unknown"}`);
+                if (e?.errors) {
+                  core.error(`GraphQL errors: ${JSON.stringify(e.errors)}`);
+                }
               }
             } else {
               core.info("Skip: PROJECT_V2_ID is not set. Project linking is disabled.");
@@ -254,21 +264,27 @@ jobs:
               // 子Issueを同じプロジェクトへ追加し、Status を In Progress にする（設定されている場合のみ）
               if (projectV2Id) {
                 try {
+                  core.info(`DEBUG: Adding child issue #${created.data.number} to Project v2...`);
                   const itemId = await addToProjectV2(projectV2Id, childIssueId);
                   if (!itemId) {
                     core.warning(`Project itemId is missing for child issue. issue=#${created.data.number}`);
                   } else if (projectV2StatusFieldId && projectV2InProgressOptionId) {
+                    core.info(`DEBUG: Setting Status to In Progress for child issue #${created.data.number}...`);
                     await setProjectV2SingleSelectField(
                       projectV2Id,
                       itemId,
                       projectV2StatusFieldId,
                       projectV2InProgressOptionId
                     );
+                    core.info(`DEBUG: Successfully set Status to In Progress for child issue #${created.data.number}.`);
                   } else {
                     core.info("Skip: PROJECT_V2_STATUS_FIELD_ID or PROJECT_V2_IN_PROGRESS_OPTION_ID is not set. Status update is disabled.");
                   }
                 } catch (e) {
-                  core.warning(`Failed to add/update child issue in Project v2. issue=#${created.data.number}, status=${e?.status ?? "unknown"}`);
+                  core.error(`Failed to add/update child issue in Project v2. issue=#${created.data.number}, status=${e?.status ?? "unknown"}, message=${e?.message ?? "unknown"}`);
+                  if (e?.errors) {
+                    core.error(`GraphQL errors: ${JSON.stringify(e.errors)}`);
+                  }
                 }
               }
 
