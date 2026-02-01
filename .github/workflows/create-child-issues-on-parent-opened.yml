@@ -142,8 +142,15 @@ jobs:
 
                 const templateContent = fs.readFileSync(fullTemplatePath, "utf8");
 
-                // シンプルなYAMLパーサーでbodyセクションを抽出
-                // 完全な実装にはjs-yamlが必要ですが、基本的な構造は正規表現で抽出可能
+                // js-yamlが利用可能か試す（GitHub Actions環境では利用できない可能性がある）
+                let yaml;
+                try {
+                  yaml = require("js-yaml");
+                } catch (e) {
+                  core.info("js-yaml is not available, using regex parser");
+                  yaml = null;
+                }
+
                 const sections = [];
 
                 // 親チケット情報を先頭に追加
@@ -155,117 +162,92 @@ jobs:
                 sections.push(`---`);
                 sections.push(``);
 
-                // bodyセクションを抽出して解析
-                const bodySectionMatch = templateContent.match(/^body:\s*\n((?:[ \t]+-.*\n?)+)/ms);
-                if (bodySectionMatch) {
-                  const bodySection = bodySectionMatch[1];
+                let bodyItems = [];
 
-                  // 各アイテムを抽出（簡易的な正規表現ベースのパーサー）
-                  const itemRegex = /^[ \t]+- type: (\w+)\s*\n((?:[ \t]+.*\n?)*)/gm;
-                  let match;
+                // js-yamlが利用可能な場合は使用
+                if (yaml) {
+                  try {
+                    const parsed = yaml.load(templateContent);
+                    core.info(`DEBUG: Parsed YAML successfully. Body is array: ${Array.isArray(parsed?.body)}`);
+                    if (parsed && Array.isArray(parsed.body)) {
+                      bodyItems = parsed.body;
+                      core.info(`DEBUG: Found ${bodyItems.length} body items using js-yaml`);
+                    } else {
+                      core.warning(`Template body is not an array: ${templatePath}. Using regex parser.`);
+                      bodyItems = parseBodyWithRegex(templateContent);
+                    }
+                  } catch (e) {
+                    core.warning(`Failed to parse YAML with js-yaml: ${e.message}. Using regex parser.`);
+                    bodyItems = parseBodyWithRegex(templateContent);
+                  }
+                } else {
+                  // 正規表現ベースのパーサーを使用
+                  core.info(`DEBUG: Using regex parser for template: ${templatePath}`);
+                  bodyItems = parseBodyWithRegex(templateContent);
+                  core.info(`DEBUG: Found ${bodyItems.length} body items using regex parser`);
+                }
 
-                  while ((match = itemRegex.exec(bodySection)) !== null) {
-                    const itemType = match[1];
-                    const itemContent = match[2];
+                if (bodyItems.length === 0) {
+                  core.warning(`No body items found in template: ${templatePath}. Using default body.`);
+                  core.warning(`DEBUG: Template content preview (first 500 chars): ${templateContent.substring(0, 500)}`);
+                  return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
+                }
 
-                    if (itemType === "markdown") {
-                      // markdownセクションを抽出
-                      const valueMatch = itemContent.match(/attributes:\s*\n[ \t]+value:\s*\|\s*\n((?:[ \t]+.*\n?)+)/);
-                      if (valueMatch) {
-                        const markdownContent = valueMatch[1]
-                          .split("\n")
-                          .map(line => line.replace(/^[ \t]+/, ""))
-                          .filter(line => line.trim() || line === "")
-                          .join("\n");
-                        sections.push(markdownContent.trim());
+                // 各アイテムを処理
+                for (const item of bodyItems) {
+                  if (item.type === "markdown") {
+                    const value = item.attributes?.value || "";
+                    if (value) {
+                      sections.push(value.trim());
+                      sections.push(``);
+                    }
+                  } else if (item.type === "textarea" || item.type === "input") {
+                    const label = item.attributes?.label || "";
+                    const description = item.attributes?.description || "";
+
+                    if (label) {
+                      sections.push(`### ${label}`);
+                      if (description) {
+                        sections.push(`${description}`);
+                      }
+                      sections.push(``);
+                    }
+                  } else if (item.type === "dropdown") {
+                    const label = item.attributes?.label || "";
+                    const description = item.attributes?.description || "";
+                    const options = item.attributes?.options || [];
+
+                    if (label) {
+                      sections.push(`### ${label}`);
+                      if (description) {
+                        sections.push(`${description}`);
+                      }
+                      if (options.length > 0) {
                         sections.push(``);
-                      }
-                    } else if (itemType === "textarea" || itemType === "input") {
-                      // textarea/inputフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-                      const description = descMatch ? descMatch[1] : "";
-
-                      sections.push(`### ${label}`);
-                      if (description) {
-                        sections.push(`${description}`);
-                      }
-                      // 入力欄は空のまま（プレースホルダーやコメントは追加しない）
-                      sections.push(``);
-                    } else if (itemType === "dropdown") {
-                      // dropdownフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const descMatch = itemContent.match(/description:\s*["']?([^"'\n]+)["']?/);
-                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-                      const description = descMatch ? descMatch[1] : "";
-
-                      sections.push(`### ${label}`);
-                      if (description) {
-                        sections.push(`${description}`);
-                      }
-                      if (optionsMatch) {
-                        const options = optionsMatch[1]
-                          .split("\n")
-                          .map(line => line.match(/[ \t]+- (.+)/))
-                          .filter(Boolean)
-                          .map(m => m[1]);
-                        if (options.length > 0) {
-                          sections.push(``);
-                          sections.push("選択肢:");
-                          options.forEach(opt => {
-                            sections.push(`- ${opt}`);
-                          });
-                        }
-                      }
-                      // 選択欄は空のまま（コメントは追加しない）
-                      sections.push(``);
-                    } else if (itemType === "checkboxes") {
-                      // checkboxesフィールドを抽出
-                      const labelMatch = itemContent.match(/attributes:\s*\n[ \t]+label:\s*["']?([^"'\n]+)["']?/);
-                      const optionsMatch = itemContent.match(/options:\s*\n((?:[ \t]+-.*\n?)+)/);
-
-                      // ラベルが見つからない場合はスキップ
-                      if (!labelMatch) {
-                        continue;
-                      }
-
-                      const label = labelMatch[1];
-
-                      sections.push(`### ${label}`);
-                      sections.push(``);
-                      if (optionsMatch) {
-                        const options = optionsMatch[1]
-                          .split("\n")
-                          .map(line => {
-                            const optMatch = line.match(/[ \t]+- label:\s*["']?([^"'\n]+)["']?/);
-                            return optMatch ? optMatch[1] : null;
-                          })
-                          .filter(Boolean);
+                        sections.push("選択肢:");
                         options.forEach(opt => {
-                          sections.push(`- [ ] ${opt}`);
+                          const optionText = typeof opt === "string" ? opt : opt.label || String(opt);
+                          sections.push(`- ${optionText}`);
+                        });
+                      }
+                      sections.push(``);
+                    }
+                  } else if (item.type === "checkboxes") {
+                    const label = item.attributes?.label || "";
+                    const options = item.attributes?.options || [];
+
+                    if (label) {
+                      sections.push(`### ${label}`);
+                      sections.push(``);
+                      if (Array.isArray(options)) {
+                        options.forEach(opt => {
+                          const optionLabel = typeof opt === "string" ? opt : opt.label || String(opt);
+                          sections.push(`- [ ] ${optionLabel}`);
                         });
                       }
                       sections.push(``);
                     }
                   }
-                } else {
-                  // bodyセクションが見つからない場合はデフォルト本文を使用
-                  core.warning(`Template body section not found: ${templatePath}. Using default body.`);
-                  return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
                 }
 
                 sections.push(``);
@@ -278,6 +260,196 @@ jobs:
                 core.error(`Stack: ${e.stack}`);
                 return buildDefaultChildBody(parentUrl, parentNumber, childBaseTitle);
               }
+            }
+
+            /**
+             * 正規表現ベースでYAMLテンプレートのbodyセクションを解析します（js-yamlが利用できない場合のフォールバック）。
+             * @param {string} templateContent テンプレートファイルの内容
+             * @returns {Array<{type: string, attributes: any}>} 解析されたbodyアイテムの配列
+             */
+            function parseBodyWithRegex(templateContent) {
+              const items = [];
+
+              // bodyセクションの開始位置を探す
+              const bodyMatch = templateContent.match(/^body:\s*\n/m);
+              if (!bodyMatch) {
+                core.warning("body: section not found in template");
+                return items;
+              }
+
+              const bodyStart = bodyMatch.index + bodyMatch[0].length;
+              const bodySection = templateContent.substring(bodyStart);
+
+              // 行ごとに分割して処理
+              const lines = bodySection.split("\n");
+              let i = 0;
+              let currentItem = null;
+              let inAttributes = false;
+              let inValueBlock = false;
+              let valueLines = [];
+              let valueIndent = 0;
+
+              while (i < lines.length) {
+                const line = lines[i];
+                const trimmed = line.trim();
+
+                // 新しいアイテムの開始（`  - type: ...`）
+                if (line.match(/^  - type: (\w+)/)) {
+                  // 前のアイテムを保存
+                  if (currentItem) {
+                    if (inValueBlock && valueLines.length > 0) {
+                      currentItem.attributes.value = valueLines.join("\n").trim();
+                      valueLines = [];
+                      inValueBlock = false;
+                    }
+                    items.push(currentItem);
+                  }
+
+                  const typeMatch = line.match(/^  - type: (\w+)/);
+                  currentItem = {
+                    type: typeMatch[1],
+                    attributes: {},
+                  };
+                  inAttributes = false;
+                  inValueBlock = false;
+                  valueLines = [];
+                  i++;
+                  continue;
+                }
+
+                // attributes セクションの開始
+                if (line.match(/^    attributes:/)) {
+                  inAttributes = true;
+                  i++;
+                  continue;
+                }
+
+                // アイテムの終了（次のアイテムまたはbodyセクションの終了）
+                if (currentItem && line.match(/^[a-z]/) && !line.match(/^    /)) {
+                  if (inValueBlock && valueLines.length > 0) {
+                    currentItem.attributes.value = valueLines.join("\n").trim();
+                    valueLines = [];
+                    inValueBlock = false;
+                  }
+                  items.push(currentItem);
+                  currentItem = null;
+                  inAttributes = false;
+                  // この行は次のセクションの可能性があるので、処理を続ける
+                }
+
+                if (currentItem && inAttributes) {
+                  // value: | 形式のマルチライン文字列
+                  if (line.match(/^      value:\s*\|\s*$/)) {
+                    inValueBlock = true;
+                    valueIndent = 8; // 8スペースのインデント
+                    i++;
+                    continue;
+                  }
+
+                  // マルチライン文字列の内容
+                  if (inValueBlock) {
+                    if (line.match(/^        /) || line === "") {
+                      // 8スペース以上のインデントまたは空行
+                      valueLines.push(line.replace(/^        /, ""));
+                    } else if (line.match(/^      /) || line.match(/^    /) || line.match(/^  /) || trimmed === "") {
+                      // インデントが減った = マルチライン文字列の終了
+                      if (valueLines.length > 0) {
+                        currentItem.attributes.value = valueLines.join("\n").trim();
+                        valueLines = [];
+                      }
+                      inValueBlock = false;
+                      // この行を再処理
+                      continue;
+                    } else {
+                      // 予期しない形式
+                      inValueBlock = false;
+                      if (valueLines.length > 0) {
+                        currentItem.attributes.value = valueLines.join("\n").trim();
+                        valueLines = [];
+                      }
+                    }
+                  } else {
+                    // 通常の属性（label, description, options など）
+                    // label: "..." または label: ... の形式（引用符あり/なし両対応）
+                    const labelMatch = line.match(/^      label:\s*(.+)$/);
+                    if (labelMatch) {
+                      let labelValue = labelMatch[1].trim();
+                      // 引用符を除去
+                      if ((labelValue.startsWith('"') && labelValue.endsWith('"')) ||
+                          (labelValue.startsWith("'") && labelValue.endsWith("'"))) {
+                        labelValue = labelValue.slice(1, -1);
+                      }
+                      currentItem.attributes.label = labelValue;
+                      i++;
+                      continue;
+                    }
+
+                    // description: "..." または description: ... の形式（引用符あり/なし両対応）
+                    const descMatch = line.match(/^      description:\s*(.+)$/);
+                    if (descMatch) {
+                      let descValue = descMatch[1].trim();
+                      // 引用符を除去
+                      if ((descValue.startsWith('"') && descValue.endsWith('"')) ||
+                          (descValue.startsWith("'") && descValue.endsWith("'"))) {
+                        descValue = descValue.slice(1, -1);
+                      }
+                      currentItem.attributes.description = descValue;
+                      i++;
+                      continue;
+                    }
+
+                    // options: セクションの開始
+                    if (line.match(/^      options:\s*$/)) {
+                      const options = [];
+                      i++;
+                      // 次の行からオプションを読み取る
+                      while (i < lines.length) {
+                        const optLine = lines[i];
+                        // オプション行: `        - label: "..."` または `        - "..."`
+                        const optLabelMatch = optLine.match(/^        - label:\s*(.+)$/);
+                        const optSimpleMatch = optLine.match(/^        - (.+)$/);
+                        if (optLabelMatch) {
+                          let optValue = optLabelMatch[1].trim();
+                          // 引用符を除去
+                          if ((optValue.startsWith('"') && optValue.endsWith('"')) ||
+                              (optValue.startsWith("'") && optValue.endsWith("'"))) {
+                            optValue = optValue.slice(1, -1);
+                          }
+                          options.push(optValue);
+                        } else if (optSimpleMatch) {
+                          let optValue = optSimpleMatch[1].trim();
+                          // 引用符を除去
+                          if ((optValue.startsWith('"') && optValue.endsWith('"')) ||
+                              (optValue.startsWith("'") && optValue.endsWith("'"))) {
+                            optValue = optValue.slice(1, -1);
+                          }
+                          options.push(optValue);
+                        } else if (optLine.match(/^      /) || optLine.match(/^    /) || optLine.match(/^  /) || (optLine.trim() === "" && i < lines.length - 1 && lines[i + 1] && !lines[i + 1].match(/^        /))) {
+                          // インデントが減った = optionsセクションの終了
+                          break;
+                        }
+                        i++;
+                      }
+                      if (options.length > 0) {
+                        currentItem.attributes.options = options;
+                      }
+                      continue;
+                    }
+                  }
+                }
+
+                i++;
+              }
+
+              // 最後のアイテムを保存
+              if (currentItem) {
+                if (inValueBlock && valueLines.length > 0) {
+                  currentItem.attributes.value = valueLines.join("\n").trim();
+                }
+                items.push(currentItem);
+              }
+
+              return items;
             }
 
             /**
