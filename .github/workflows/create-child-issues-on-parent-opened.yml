@@ -25,6 +25,8 @@ on:
 
 permissions:
   issues: write
+  # GitHub Projects（Project v2）へアイテム追加/フィールド更新するために必要
+  repository-projects: write
 
 jobs:
   create-child-issues:
@@ -32,7 +34,19 @@ jobs:
     steps:
       - name: Create child issues when parent issue is opened
         uses: actions/github-script@v7
+        env:
+          # リポジトリ変数（Settings > Secrets and variables > Actions > Variables）で設定してください
+          # - PROJECT_V2_ID: Project v2 の node_id
+          # - PROJECT_V2_STATUS_FIELD_ID: Status フィールドの node_id
+          # - PROJECT_V2_IN_PROGRESS_OPTION_ID: Status の "In Progress" option の node_id
+          PROJECT_V2_ID: ${{ vars.PROJECT_V2_ID }}
+          PROJECT_V2_STATUS_FIELD_ID: ${{ vars.PROJECT_V2_STATUS_FIELD_ID }}
+          PROJECT_V2_IN_PROGRESS_OPTION_ID: ${{ vars.PROJECT_V2_IN_PROGRESS_OPTION_ID }}
         with:
+          # 既定は GITHUB_TOKEN を使用します。
+          # User/Org の Project v2 が GITHUB_TOKEN で更新できない場合は、
+          # Secrets に PROJECT_V2_TOKEN（Classic PAT推奨: project / read:org / repo）を登録して使用してください。
+          github-token: ${{ secrets.PROJECT_V2_TOKEN || github.token }}
           script: |
             /**
              * 親Issueかどうかを判定します。
@@ -75,6 +89,10 @@ jobs:
               core.warning(`Skip: parent issue node_id is missing. issue_number=#${issue.number}`);
               return;
             }
+
+            const projectV2Id = process.env.PROJECT_V2_ID;
+            const projectV2StatusFieldId = process.env.PROJECT_V2_STATUS_FIELD_ID;
+            const projectV2InProgressOptionId = process.env.PROJECT_V2_IN_PROGRESS_OPTION_ID;
 
             // 重複防止：親本文に目印があれば終了
             const parentBody = typeof issue.body === "string" ? issue.body : "";
@@ -125,6 +143,60 @@ jobs:
             const createdChildren = [];
 
             /**
+             * Issue/PR を Project v2 に追加します。
+             * @param {string} projectId Project v2 の node_id
+             * @param {string} contentId Issue/PR の node_id
+             * @returns {Promise<string>} 追加された itemId
+             */
+            async function addToProjectV2(projectId, contentId) {
+              const mutation = `
+                mutation AddProjectV2ItemById($input: AddProjectV2ItemByIdInput!) {
+                  addProjectV2ItemById(input: $input) {
+                    item { id }
+                  }
+                }
+              `;
+
+              const res = await github.graphql(mutation, {
+                input: {
+                  projectId,
+                  contentId,
+                },
+              });
+
+              return res?.addProjectV2ItemById?.item?.id;
+            }
+
+            /**
+             * Project v2 の単一選択フィールド（例: Status）を更新します。
+             * @param {string} projectId Project v2 の node_id
+             * @param {string} itemId Project item の node_id
+             * @param {string} fieldId フィールドの node_id
+             * @param {string} optionId 選択肢の node_id
+             * @returns {Promise<void>}
+             */
+            async function setProjectV2SingleSelectField(projectId, itemId, fieldId, optionId) {
+              const mutation = `
+                mutation UpdateProjectV2ItemFieldValue($input: UpdateProjectV2ItemFieldValueInput!) {
+                  updateProjectV2ItemFieldValue(input: $input) {
+                    projectV2Item { id }
+                  }
+                }
+              `;
+
+              await github.graphql(mutation, {
+                input: {
+                  projectId,
+                  itemId,
+                  fieldId,
+                  value: {
+                    singleSelectOptionId: optionId,
+                  },
+                },
+              });
+            }
+
+            /**
              * 親子関係（Relationshipsの親子）を作成します。
              * @param {string} parentId 親IssueのGraphQL node_id
              * @param {string} subIssueId 子IssueのGraphQL node_id
@@ -148,6 +220,17 @@ jobs:
               });
             }
 
+            // 親Issueを同じプロジェクトへ追加（設定されていない場合はスキップ）
+            if (projectV2Id) {
+              try {
+                await addToProjectV2(projectV2Id, parentIssueId);
+              } catch (e) {
+                core.warning(`Failed to add parent issue to Project v2. issue=#${issue.number}, status=${e?.status ?? "unknown"}`);
+              }
+            } else {
+              core.info("Skip: PROJECT_V2_ID is not set. Project linking is disabled.");
+            }
+
             for (const def of childDefinitions) {
               const childTitle = `${def.prefix}${baseTitle}`;
               const body = buildChildBody(issue.html_url, issue.number, def.prefix, baseTitle);
@@ -167,6 +250,27 @@ jobs:
 
               // Relationships（Add parent相当）で親子関係を作成
               await linkSubIssue(parentIssueId, childIssueId);
+
+              // 子Issueを同じプロジェクトへ追加し、Status を In Progress にする（設定されている場合のみ）
+              if (projectV2Id) {
+                try {
+                  const itemId = await addToProjectV2(projectV2Id, childIssueId);
+                  if (!itemId) {
+                    core.warning(`Project itemId is missing for child issue. issue=#${created.data.number}`);
+                  } else if (projectV2StatusFieldId && projectV2InProgressOptionId) {
+                    await setProjectV2SingleSelectField(
+                      projectV2Id,
+                      itemId,
+                      projectV2StatusFieldId,
+                      projectV2InProgressOptionId
+                    );
+                  } else {
+                    core.info("Skip: PROJECT_V2_STATUS_FIELD_ID or PROJECT_V2_IN_PROGRESS_OPTION_ID is not set. Status update is disabled.");
+                  }
+                } catch (e) {
+                  core.warning(`Failed to add/update child issue in Project v2. issue=#${created.data.number}, status=${e?.status ?? "unknown"}`);
+                }
+              }
 
               createdChildren.push({
                 prefix: def.prefix,
